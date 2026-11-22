@@ -81,6 +81,17 @@
   }
 
   * { box-sizing: border-box; }
+  /* Kill the default mobile-browser blue tap flash / focus ring on every
+     tappable control — buttons, pills, stepper +/-, the save button — so
+     pressing anything shows only our own :active animation. */
+  button, .icon-btn, .shift-btn, .stepper button, .save-btn, .section-clear, .save-modal-close {
+    -webkit-tap-highlight-color: transparent;
+    outline: none;
+  }
+  button:focus, .icon-btn:focus, .shift-btn:focus, .stepper button:focus,
+  .save-btn:focus, .section-clear:focus, .save-modal-close:focus {
+    outline: none;
+  }
   html, body { height: 100%; }
   body {
     margin: 0;
@@ -160,18 +171,36 @@
     border: 1px solid var(--line);
     background: var(--surface-sunken);
     color: var(--ink-soft);
-    width: 34px;
-    height: 34px;
+    width: 36px;
+    height: 36px;
     border-radius: 999px;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 14px;
+    font-size: 16px;
     padding: 0;
+    transition: transform 0.15s ease, background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
   }
   .icon-btn svg { width: 16px; height: 16px; }
-  .icon-btn:active { transform: scale(0.92); }
+  .icon-btn:active { transform: scale(0.88) rotate(-6deg); }
+
+  /* Cute colored "mood" pills for the theme toggle, one tint per state. */
+  .icon-btn.theme-auto { background: linear-gradient(160deg, #eef2ff, #e0e7ff); border-color: #c7d2fe; }
+  .icon-btn.theme-light { background: linear-gradient(160deg, #fff7e0, #ffedb3); border-color: #fcd34d; }
+  .icon-btn.theme-dark { background: linear-gradient(160deg, #2d2f55, #1c1e3a); border-color: #4b4f8a; color: #f5f3ff; }
+
+  /* Cute colored pill for the sound toggle: green when on, soft grey when muted. */
+  .icon-btn.sound-on { background: linear-gradient(160deg, #e3fbe8, #c9f5d4); border-color: #86e8a0; }
+  .icon-btn.sound-off { background: var(--surface-sunken); border-color: var(--line); opacity: 0.75; }
+
+  @keyframes icon-pop {
+    0% { transform: scale(0.7) rotate(-10deg); }
+    60% { transform: scale(1.12) rotate(4deg); }
+    100% { transform: scale(1) rotate(0); }
+  }
+  .icon-btn.just-toggled { animation: icon-pop 0.38s cubic-bezier(.34,1.56,.64,1); }
   .top-meta {
     display: flex;
     align-items: baseline;
@@ -400,8 +429,14 @@
     padding: 6px 2px;
     background: var(--surface);
     color: var(--ink);
+    caret-color: var(--accent);
+    -webkit-tap-highlight-color: transparent;
+    -webkit-user-select: text;
+    user-select: text;
   }
-  .stepper input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  /* Keep only a plain blinking text caret on focus — no blue selection
+     box/outline and no native "select all" highlight. */
+  .stepper input:focus { outline: none; border-color: var(--accent); }
 
   .row-amount {
     font-variant-numeric: tabular-nums;
@@ -747,7 +782,7 @@
     <div class="splash-logo"></div>
   </div>
   <div class="splash-title">นับเงิน</div>
-  <div class="splash-subtitle">พันไทย · สรุปยอดเงินสด</div>
+  <div class="splash-subtitle">FOR - PUNTHAI N661</div>
   <div class="splash-version">v1.01</div>
   <div class="splash-footer">
     <span>Powered by</span>
@@ -882,13 +917,10 @@
       if (!Ctx) return null;
       audioCtx = new Ctx();
     }
-    if (audioCtx.state === "suspended") audioCtx.resume();
     return audioCtx;
   }
 
-  function playTone(freq, start, duration, type, peakGain) {
-    var ctx = getAudioCtx();
-    if (!ctx) return;
+  function scheduleTone(ctx, freq, start, duration, type, peakGain) {
     var osc = ctx.createOscillator();
     var gain = ctx.createGain();
     osc.type = type || "sine";
@@ -900,6 +932,22 @@
     osc.connect(gain).connect(ctx.destination);
     osc.start(t0);
     osc.stop(t0 + duration + 0.02);
+  }
+
+  function playTone(freq, start, duration, type, peakGain) {
+    var ctx = getAudioCtx();
+    if (!ctx) return;
+    if (ctx.state === "suspended") {
+      // Mobile browsers keep the context suspended until it's resumed
+      // inside a direct user-gesture handler (a tap). Scheduling a tone
+      // against ctx.currentTime while still suspended produces no sound
+      // at all, so wait for the resume to actually complete first.
+      ctx.resume().then(function () {
+        scheduleTone(ctx, freq, start, duration, type, peakGain);
+      });
+    } else {
+      scheduleTone(ctx, freq, start, duration, type, peakGain);
+    }
   }
 
   function playTickSound(isIncrement) {
@@ -1046,8 +1094,13 @@
     minusBtn.setAttribute("aria-label", "ลดจำนวน");
 
     var input = document.createElement("input");
-    input.type = "number";
+    // type="text" (not "number") so we can control the caret ourselves —
+    // native number inputs force a full "select all" highlight on focus
+    // that we don't want. inputMode keeps the numeric keyboard on mobile.
+    input.type = "text";
     input.inputMode = "numeric";
+    input.pattern = "[0-9]*";
+    input.autocomplete = "off";
     input.min = "0";
     input.value = getCount(sectionKey, denom);
 
@@ -1067,9 +1120,16 @@
       setCount(sectionKey, denom, getCount(sectionKey, denom) + 1);
     });
     input.addEventListener("input", function () {
-      // Update the number silently (no full re-render) so the field keeps
-      // focus and cursor position while the person is still typing digits.
-      var n = parseInt(input.value, 10);
+      // Strip anything that isn't a digit (since type is now "text"), then
+      // drop a leading zero as soon as there's more than one digit — so
+      // typing "9" right after the default "0" gives "9", not "09".
+      var raw = input.value.replace(/[^0-9]/g, "");
+      if (raw.length > 1) raw = raw.replace(/^0+/, "") || "0";
+      if (raw !== input.value) {
+        input.value = raw;
+        try { input.setSelectionRange(raw.length, raw.length); } catch (e) { /* ignore */ }
+      }
+      var n = parseInt(raw, 10);
       setCount(sectionKey, denom, isNaN(n) ? 0 : n, { liveOnly: true });
     });
     input.addEventListener("blur", function () {
@@ -1077,7 +1137,13 @@
       // zeros, clamp, show 0 for an empty field).
       input.value = String(getCount(sectionKey, denom));
     });
-    input.addEventListener("focus", function () { input.select(); });
+    input.addEventListener("focus", function () {
+      // Place a plain blinking caret at the end instead of selecting all
+      // the text (which is what triggers the blue highlight/selection
+      // handles on mobile).
+      var v = input.value;
+      try { input.setSelectionRange(v.length, v.length); } catch (e) { /* ignore */ }
+    });
 
     stepper.appendChild(minusBtn);
     stepper.appendChild(input);
@@ -1301,17 +1367,29 @@
       document.documentElement.setAttribute("data-theme", theme);
     }
   }
+  function bounceIcon(btn) {
+    btn.classList.remove("just-toggled");
+    // Force a reflow so the animation can replay even if it's still
+    // mid-flight from the previous tap.
+    void btn.offsetWidth;
+    btn.classList.add("just-toggled");
+  }
   function updateThemeToggleUI() {
     var icon = theme === "dark" ? "🌙" : (theme === "light" ? "☀️" : "🌓");
     var label = theme === "dark" ? "มืด" : (theme === "light" ? "สว่าง" : "อัตโนมัติ");
     themeToggleBtn.textContent = icon;
     themeToggleBtn.setAttribute("aria-label", "โหมดสี: " + label);
+    themeToggleBtn.classList.remove("theme-auto", "theme-light", "theme-dark");
+    themeToggleBtn.classList.add(
+      theme === "dark" ? "theme-dark" : (theme === "light" ? "theme-light" : "theme-auto")
+    );
   }
   themeToggleBtn.addEventListener("click", function () {
     theme = theme === "system" ? "light" : (theme === "light" ? "dark" : "system");
     try { localStorage.setItem(THEME_KEY, theme); } catch (e) { /* ignore */ }
     applyTheme();
     updateThemeToggleUI();
+    bounceIcon(themeToggleBtn);
     vibrate(10);
   });
   applyTheme();
@@ -1321,11 +1399,14 @@
   function updateSoundToggleUI() {
     soundToggleBtn.textContent = soundOn ? "🔊" : "🔇";
     soundToggleBtn.setAttribute("aria-pressed", String(soundOn));
+    soundToggleBtn.classList.remove("sound-on", "sound-off");
+    soundToggleBtn.classList.add(soundOn ? "sound-on" : "sound-off");
   }
   soundToggleBtn.addEventListener("click", function () {
     soundOn = !soundOn;
     try { localStorage.setItem(SOUND_KEY, soundOn ? "1" : "0"); } catch (e) { /* ignore */ }
     updateSoundToggleUI();
+    bounceIcon(soundToggleBtn);
     vibrate(10);
     if (soundOn) playTickSound(true);
   });

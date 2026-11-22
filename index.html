@@ -437,6 +437,11 @@
   /* Keep only a plain blinking text caret on focus — no blue selection
      box/outline and no native "select all" highlight. */
   .stepper input:focus { outline: none; border-color: var(--accent); }
+  .stepper input::placeholder {
+    color: var(--ink-soft);
+    opacity: 0.55;
+    font-weight: 600;
+  }
 
   .row-amount {
     font-variant-numeric: tabular-nums;
@@ -1102,7 +1107,9 @@
     input.pattern = "[0-9]*";
     input.autocomplete = "off";
     input.min = "0";
-    input.value = getCount(sectionKey, denom);
+    input.placeholder = "0";
+    var startCount = getCount(sectionKey, denom);
+    input.value = startCount === 0 ? "" : String(startCount);
 
     var plusBtn = document.createElement("button");
     plusBtn.type = "button";
@@ -1133,9 +1140,12 @@
       setCount(sectionKey, denom, isNaN(n) ? 0 : n, { liveOnly: true });
     });
     input.addEventListener("blur", function () {
-      // Once typing is done, normalize the displayed value (strip leading
-      // zeros, clamp, show 0 for an empty field).
-      input.value = String(getCount(sectionKey, denom));
+      // Once typing is done, normalize the displayed value. Zero is shown
+      // as an empty field (with "0" as a greyed-out placeholder) so the
+      // next tap starts clean instead of requiring the "0" to be cleared
+      // or typed over.
+      var count = getCount(sectionKey, denom);
+      input.value = count === 0 ? "" : String(count);
     });
     // No custom focus handler: let the browser place the caret wherever
     // the person actually tapped (that's what gives a normal blinking

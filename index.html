@@ -1137,13 +1137,10 @@
       // zeros, clamp, show 0 for an empty field).
       input.value = String(getCount(sectionKey, denom));
     });
-    input.addEventListener("focus", function () {
-      // Place a plain blinking caret at the end instead of selecting all
-      // the text (which is what triggers the blue highlight/selection
-      // handles on mobile).
-      var v = input.value;
-      try { input.setSelectionRange(v.length, v.length); } catch (e) { /* ignore */ }
-    });
+    // No custom focus handler: let the browser place the caret wherever
+    // the person actually tapped (that's what gives a normal blinking
+    // caret). Forcing it to the end here was the bug — tapping at the
+    // front of "2" would still insert at the end, turning it into "20".
 
     stepper.appendChild(minusBtn);
     stepper.appendChild(input);
